@@ -16,21 +16,20 @@ import pandas as pd
 #
 # Adjust this path if your actual structure is different.
 DATASET_ROOT = Path(
-    "/content/drive/MyDrive/datasets/WBCAtt/PBC_dataset_normal_DIB"
+    "/content/WBCAtt/PBC_dataset_normal_DIB"
 )
 
 TRAIN_CSV = Path(
-    "/content/drive/MyDrive/datasets/WBCAtt/annotations/pbc_attr_v1_train.csv"
+    "/content/WBCAtt/annotations/pbc_attr_v1_train.csv"
 )
 
 VAL_CSV = Path(
-    "/content/drive/MyDrive/datasets/WBCAtt/annotations/pbc_attr_v1_val.csv"
+    "/content/WBCAtt/annotations/pbc_attr_v1_val.csv"
 )
 
 TEST_CSV = Path(
-    "/content/drive/MyDrive/datasets/WBCAtt/annotations/test.csv"
+    "/content/WBCAtt/annotations/test.csv"
 )
-
 # ============================================================
 # 2. EXPECTED COLUMNS
 # ============================================================

@@ -10,11 +10,9 @@ from torchvision import transforms
 # ============================================================
 # 1. Dataset paths
 # ============================================================
-
 DATASET_ROOT = Path(
-    "/content/drive/MyDrive/datasets/WBCAtt"
+    "/content/WBCAtt"
 )
-
 IMAGE_ROOT = DATASET_ROOT / "PBC_dataset_normal_DIB"
 ANNOTATION_ROOT = DATASET_ROOT / "annotations"
 
