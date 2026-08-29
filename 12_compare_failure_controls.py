@@ -1,312 +1,322 @@
 
 from pathlib import Path
-import re
+import math
+import sys
 
-import numpy as np
 import pandas as pd
-import torch
-import torch.nn as nn
+import matplotlib.pyplot as plt
+from PIL import Image, ImageOps
 
-from torchvision.models import resnet18
-from torchvision import transforms
+
+sys.path.insert(
+    0,
+    "/content"
+)
+
+from mafd_utils import (
+    ALL_CASES_PATH,
+    FAILURE_ANALYSIS_DIR,
+    clean_prediction_dataframe,
+    safe_filename,
+)
 
 
 # ============================================================
-# Paths
+# Output paths
 # ============================================================
 
-PRIMARY_OUTPUT_DIR = Path(
-    "/content/drive/MyDrive/MAFD_OUTPUTS/model_a_clean"
+COMPARISON_PATH = (
+    FAILURE_ANALYSIS_DIR
+    / "failure_control_comparison.csv"
 )
 
-FALLBACK_OUTPUT_DIR = Path(
-    "/content/MAFD_OUTPUTS/model_a_clean"
+COMPARISON_SHEET_PATH = (
+    FAILURE_ANALYSIS_DIR
+    / "failure_control_comparison_sheet.png"
 )
 
-if PRIMARY_OUTPUT_DIR.exists():
-    MODEL_OUTPUT_DIR = PRIMARY_OUTPUT_DIR
-else:
-    MODEL_OUTPUT_DIR = FALLBACK_OUTPUT_DIR
 
-if not MODEL_OUTPUT_DIR.exists():
+# ============================================================
+# Load cases
+# ============================================================
+
+if not ALL_CASES_PATH.exists():
     raise FileNotFoundError(
-        f"Model output directory was not found:\n"
-        f"{MODEL_OUTPUT_DIR}"
+        f"Required file was not found:\n{ALL_CASES_PATH}"
     )
 
-
-MODEL_PATH = (
-    MODEL_OUTPUT_DIR
-    / "model_a_clean_resnet18_best.pt"
+all_cases = pd.read_csv(
+    ALL_CASES_PATH
 )
 
-FAILURE_ANALYSIS_DIR = (
-    MODEL_OUTPUT_DIR
-    / "failure_case_analysis"
+all_cases = clean_prediction_dataframe(
+    all_cases
 )
 
-ALL_CASES_PATH = (
-    FAILURE_ANALYSIS_DIR
-    / "monocyte_high_ncr_all_cases.csv"
-)
-
-FAILURE_CASES_PATH = (
-    FAILURE_ANALYSIS_DIR
-    / "monocyte_high_ncr_failure_cases.csv"
-)
-
-CALIBRATION_DIR = (
-    MODEL_OUTPUT_DIR
-    / "calibrated_reliability_analysis"
-)
-
-CALIBRATION_SUMMARY_PATH = (
-    CALIBRATION_DIR
-    / "calibration_summary.csv"
-)
-
-ATTRIBUTE_RESULTS_PATH = (
-    CALIBRATION_DIR
-    / "calibrated_attribute_value_reliability.csv"
-)
-
-
-# ============================================================
-# Model configuration
-# ============================================================
-
-CLASS_NAMES = [
-    "basophil",
-    "eosinophil",
-    "lymphocyte",
-    "monocyte",
-    "neutrophil",
+required_columns = [
+    "img_name",
+    "resolved_path",
+    "true_label",
+    "predicted_label",
+    "calibrated_confidence",
+    "correct",
 ]
 
-CLASS_TO_INDEX = {
-    name: index
-    for index, name in enumerate(CLASS_NAMES)
-}
+missing_columns = [
+    column
+    for column in required_columns
+    if column not in all_cases.columns
+]
 
-
-def get_device():
-    return torch.device(
-        "cuda"
-        if torch.cuda.is_available()
-        else "cpu"
+if missing_columns:
+    raise KeyError(
+        "The risk-group CSV is missing:\n"
+        f"{missing_columns}"
     )
-
-
-def get_evaluation_transform():
-    return transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[
-                0.485,
-                0.456,
-                0.406,
-            ],
-            std=[
-                0.229,
-                0.224,
-                0.225,
-            ],
-        ),
-    ])
-
-
-def load_model():
-    """
-    Loads the trained Model A ResNet-18 checkpoint.
-    """
-
-    device = get_device()
-
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(
-            f"Model checkpoint was not found:\n{MODEL_PATH}"
-        )
-
-    model = resnet18(
-        weights=None
-    )
-
-    model.fc = nn.Linear(
-        in_features=model.fc.in_features,
-        out_features=len(CLASS_NAMES),
-    )
-
-    checkpoint = torch.load(
-        MODEL_PATH,
-        map_location=device,
-    )
-
-    if isinstance(checkpoint, dict):
-        if "model_state_dict" in checkpoint:
-            state_dict = checkpoint[
-                "model_state_dict"
-            ]
-        else:
-            state_dict = checkpoint
-    else:
-        state_dict = checkpoint
-
-    cleaned_state_dict = {}
-
-    for key, value in state_dict.items():
-
-        if key.startswith("module."):
-            key = key[len("module."):]
-
-        cleaned_state_dict[key] = value
-
-    model.load_state_dict(
-        cleaned_state_dict
-    )
-
-    model = model.to(device)
-    model.eval()
-
-    return model, device
 
 
 # ============================================================
-# Data utilities
+# Separate failures and correct controls
 # ============================================================
 
-def parse_boolean(value):
-    if isinstance(value, bool):
-        return value
+failure_cases = all_cases[
+    all_cases["correct"] == False
+].copy()
 
-    if pd.isna(value):
-        return False
+correct_cases = all_cases[
+    all_cases["correct"] == True
+].copy()
 
-    text = str(value).strip().lower()
-
-    return text in {
-        "true",
-        "1",
-        "yes",
-        "y",
-        "correct",
-    }
-
-
-def clean_prediction_dataframe(dataframe):
-    dataframe = dataframe.copy()
-
-    if "correct" in dataframe.columns:
-        dataframe["correct"] = (
-            dataframe["correct"]
-            .apply(parse_boolean)
-        )
-
-    if "calibrated_confidence" in dataframe.columns:
-        dataframe["calibrated_confidence"] = (
-            pd.to_numeric(
-                dataframe["calibrated_confidence"],
-                errors="coerce",
-            )
-        )
-
-    if "true_label" in dataframe.columns:
-        dataframe["true_label"] = (
-            dataframe["true_label"]
-            .astype(str)
-            .str.strip()
-            .str.lower()
-        )
-
-    if "predicted_label" in dataframe.columns:
-        dataframe["predicted_label"] = (
-            dataframe["predicted_label"]
-            .astype(str)
-            .str.strip()
-            .str.lower()
-        )
-
-    return dataframe
-
-
-def safe_filename(value):
-    value = str(value)
-
-    value = re.sub(
-        r"[^A-Za-z0-9_.-]+",
-        "_",
-        value,
+if len(failure_cases) == 0:
+    raise RuntimeError(
+        "No failure cases were found."
     )
 
-    return value
+if len(correct_cases) == 0:
+    raise RuntimeError(
+        "No correct control cases were found."
+    )
 
 
-def calculate_ece(
-    confidence,
-    correctness,
-    number_of_bins=10,
+# Select five reproducible controls.
+number_of_controls = min(
+    5,
+    len(correct_cases)
+)
+
+correct_controls = correct_cases.sample(
+    n=number_of_controls,
+    random_state=42
+).copy()
+
+failure_cases["case_type"] = (
+    "confirmed_failure"
+)
+
+correct_controls["case_type"] = (
+    "correct_control"
+)
+
+failure_cases["comparison_order"] = 0
+correct_controls["comparison_order"] = 1
+
+comparison_dataframe = pd.concat(
+    [
+        failure_cases,
+        correct_controls,
+    ],
+    ignore_index=True,
+)
+
+comparison_dataframe = (
+    comparison_dataframe
+    .sort_values(
+        by=[
+            "comparison_order",
+            "calibrated_confidence",
+        ],
+        ascending=[
+            True,
+            False,
+        ],
+    )
+    .drop(
+        columns=[
+            "comparison_order",
+        ]
+    )
+    .reset_index(drop=True)
+)
+
+
+# ============================================================
+# Add manual comparison columns
+# ============================================================
+
+manual_columns = [
+    "same_visual_pattern_as_controls",
+    "nucleus_difference",
+    "cytoplasm_difference",
+    "size_difference",
+    "shape_difference",
+    "background_difference",
+    "manual_comparison_notes",
+]
+
+for column in manual_columns:
+    comparison_dataframe[column] = ""
+
+
+comparison_dataframe.to_csv(
+    COMPARISON_PATH,
+    index=False,
+    encoding="utf-8-sig",
+)
+
+
+# ============================================================
+# Create comparison contact sheet
+# ============================================================
+
+number_of_images = len(
+    comparison_dataframe
+)
+
+number_of_columns = min(
+    3,
+    number_of_images
+)
+
+number_of_rows = math.ceil(
+    number_of_images
+    / number_of_columns
+)
+
+figure, axes = plt.subplots(
+    nrows=number_of_rows,
+    ncols=number_of_columns,
+    figsize=(
+        5 * number_of_columns,
+        6 * number_of_rows,
+    ),
+)
+
+if hasattr(axes, "flatten"):
+    axes = axes.flatten()
+else:
+    axes = [axes]
+
+for image_index, (_, row) in enumerate(
+    comparison_dataframe.iterrows()
 ):
-    confidence = np.asarray(
-        confidence,
-        dtype=float,
+
+    axis = axes[image_index]
+
+    image_path = Path(
+        row["resolved_path"]
     )
 
-    correctness = np.asarray(
-        correctness,
-        dtype=float,
+    try:
+        image = Image.open(
+            image_path
+        ).convert("RGB")
+
+        image = ImageOps.contain(
+            image,
+            size=(800, 800)
+        )
+
+        axis.imshow(image)
+
+    except Exception as error:
+
+        axis.text(
+            0.5,
+            0.5,
+            f"Could not open image:\n{error}",
+            ha="center",
+            va="center",
+        )
+
+    axis.axis("off")
+
+    case_type = row["case_type"]
+    color = "red" if case_type == (
+        "confirmed_failure"
+    ) else "green"
+
+    title = (
+        f"{case_type}\n"
+        f"{row['img_name']}\n"
+        f"True: {row['true_label']} | "
+        f"Predicted: {row['predicted_label']}\n"
+        f"Confidence: "
+        f"{float(row['calibrated_confidence']):.4f}"
     )
 
-    if len(confidence) == 0:
-        return np.nan
+    axis.set_title(
+        title,
+        color=color,
+        fontsize=10,
+    )
 
-    ece = 0.0
+for unused_axis in axes[number_of_images:]:
+    unused_axis.axis("off")
 
-    for bin_index in range(number_of_bins):
+figure.suptitle(
+    "Confirmed Failures and Correct Controls\n"
+    "Monocyte with High Nuclear-Cytoplasmic Ratio",
+    fontsize=15,
+)
 
-        lower = (
-            bin_index
-            / number_of_bins
-        )
+figure.tight_layout(
+    rect=[
+        0,
+        0,
+        1,
+        0.94,
+    ]
+)
 
-        upper = (
-            bin_index + 1
-        ) / number_of_bins
+figure.savefig(
+    COMPARISON_SHEET_PATH,
+    dpi=300,
+    bbox_inches="tight",
+)
 
-        if bin_index == number_of_bins - 1:
-            mask = (
-                (confidence >= lower)
-                &
-                (confidence <= upper)
-            )
-        else:
-            mask = (
-                (confidence >= lower)
-                &
-                (confidence < upper)
-            )
+plt.close(figure)
 
-        if mask.sum() == 0:
-            continue
 
-        bin_accuracy = (
-            correctness[mask].mean()
-        )
+# ============================================================
+# Print summary
+# ============================================================
 
-        bin_confidence = (
-            confidence[mask].mean()
-        )
+print("=" * 70)
+print("FAILURE AND CONTROL COMPARISON CREATED")
+print("=" * 70)
 
-        bin_fraction = (
-            mask.sum()
-            / len(confidence)
-        )
+print()
+print(
+    f"Confirmed failures: {len(failure_cases)}"
+)
 
-        ece += (
-            bin_fraction
-            * abs(
-                bin_accuracy
-                - bin_confidence
-            )
-        )
+print(
+    f"Correct controls: {len(correct_controls)}"
+)
 
-    return float(ece)
+print()
+print(
+    f"Comparison CSV:\n{COMPARISON_PATH}"
+)
+
+print()
+print(
+    f"Comparison contact sheet:\n"
+    f"{COMPARISON_SHEET_PATH}"
+)
+
+print()
+print(
+    "Inspect whether the failures look different from "
+    "the correctly classified monocytes."
+)
