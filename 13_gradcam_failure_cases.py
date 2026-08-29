@@ -1,4 +1,3 @@
-%%writefile /content/13_gradcam_failure_cases.py
 
 from pathlib import Path
 import sys
